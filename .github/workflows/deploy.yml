@@ -1,0 +1,36 @@
+name: Deploy to Production
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version to deploy (e.g. 3)"
+        required: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ github.event.inputs.version }}
+      REGISTRY: cr.yandex/crpcntqudb0hkbbnds00/app
+
+    steps:
+      - name: Deploy to Yandex VM over SSH
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.VM_SSH_HOST }}
+          username: ${{ secrets.VM_SSH_USER }}
+          key: ${{ secrets.VM_SSH_KEY }}
+          script: |
+            docker login cr.yandex -u oauth -p "${{ secrets.YC_CR_PASSWORD }}"
+            docker pull $REGISTRY:${VERSION}_latest
+            docker stop shri-infra || true
+            docker rm shri-infra || true
+            docker run -d --name shri-infra -p 80:3000 $REGISTRY:${VERSION}_latest
+
+      - name: Comment to Issue
+        run: |
+          gh issue comment $(gh issue list --limit 1 --search "Release v$VERSION" --json number --jq '.[0].number') \
+            --body "🚀 Release **v$VERSION** deployed to production\n📅 $(date -u)\n👤 By @${{ github.actor }}"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       VERSION: ${{ github.event.inputs.version }}
-      REGISTRY: cr.yandex/<your-registry-id>/app
+      REGISTRY: cr.yandex/crpcntqudb0hkbbnds00/app
 
     steps:
       - name: Deploy to Yandex VM over SSH

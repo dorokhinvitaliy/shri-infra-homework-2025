@@ -8,7 +8,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       VERSION: ${{ github.run_number }}
-      REGISTRY: cr.yandex/your-registry-id/app
+      REGISTRY: cr.yandex/crpcntqudb0hkbbnds00/app
 
     steps:
       - uses: actions/checkout@v3

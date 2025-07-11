@@ -23,14 +23,14 @@ jobs:
           key: ${{ secrets.VM_SSH_KEY }}
           script: |
             docker login cr.yandex -u oauth -p "${{ secrets.YC_CR_PASSWORD }}"
-            docker pull $REGISTRY:${VERSION}_latest
+            docker pull ${{ env.REGISTRY }}:${{ env.VERSION }}_latest
             docker stop shri-infra || true
             docker rm shri-infra || true
-            docker run -d --name shri-infra -p 80:3000 $REGISTRY:${VERSION}_latest
+            docker run -d --name shri-infra -p 80:3000 ${{ env.REGISTRY }}:${{ env.VERSION }}_latest
 
       - name: Comment to Issue
         run: |
-          gh issue comment $(gh issue list --limit 1 --search "Release v$VERSION" --json number --jq '.[0].number') \
-            --body "🚀 Release **v$VERSION** deployed to production\n📅 $(date -u)\n👤 By @${{ github.actor }}"
+          gh issue comment $(gh issue list --limit 1 --search "Release v${{ env.VERSION }}" --json number --jq '.[0].number') \
+            --body "🚀 Release **v${{ env.VERSION }}** deployed to production\n📅 $(date -u)\n👤 By @${{ github.actor }}"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

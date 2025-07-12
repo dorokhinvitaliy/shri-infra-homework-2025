@@ -83,6 +83,8 @@ jobs:
 
       - name: Find related issue
         id: find_issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           ISSUE_NUMBER=$(gh issue list --limit 1 --search "Release v$VERSION in:title" --json number --jq '.[0].number')
           echo "issue_number=$ISSUE_NUMBER" >> $GITHUB_OUTPUT

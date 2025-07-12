@@ -78,8 +78,37 @@ jobs:
 
       - name: Get commit list
         run: |
-          echo "**Commits since \`${{ steps.prev_tag.outputs.tag }}\`:**" > commits.txt
-          git log ${{ steps.prev_tag.outputs.tag }}..HEAD --oneline >> commits.txt || echo "No new commits" >> commits.txt
+          git fetch --tags
+
+          # Получаем все теги для этой версии
+          ALL_TAGS=$(git tag --sort=-creatordate | grep -E "^v${VERSION}(_fix[0-9]+)?$")
+
+          # Находим текущий и предыдущий фиксы
+          CURRENT_TAG="v${VERSION}_fix${FIX_NUMBER}"
+          PREV_TAG=$(echo "$ALL_TAGS" | grep -E "^v${VERSION}(_fix[0-9]+)?$" | grep -B1 "$CURRENT_TAG" | head -n1)
+
+          if [ -z "$PREV_TAG" ] || [ "$PREV_TAG" = "$CURRENT_TAG" ]; then
+            # Если предыдущего тега нет (первый фикс), сравниваем с релизным тегом
+            PREV_TAG="v${VERSION}"
+          fi
+
+          echo "Comparing changes between $PREV_TAG and $CURRENT_TAG"
+
+          # Формируем сообщение с коммитами
+          echo "🛠 Fix #${FIX_NUMBER} for Release v${VERSION}" > comment.txt
+          echo "📅 Date: $(date -u)" >> comment.txt
+          echo "👤 Author: @${{ github.actor }}" >> comment.txt
+          echo "🐳 Docker Image: \`$REGISTRY:${VERSION}_fix${FIX_NUMBER}\`" >> comment.txt
+          echo "" >> comment.txt
+
+          if [ "$PREV_TAG" = "$CURRENT_TAG" ]; then
+            echo "No new commits since last fix" >> comment.txt
+          else
+            echo "**Commits since \`${PREV_TAG}\`:**" >> comment.txt
+            git log ${PREV_TAG}..${CURRENT_TAG} --oneline >> comment.txt || echo "No new commits" >> comment.txt
+          fi
+
+          cat comment.txt
 
       - name: Find related issue
         id: find_issue

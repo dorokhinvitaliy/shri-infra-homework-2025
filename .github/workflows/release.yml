@@ -12,8 +12,12 @@ jobs:
 
     steps:
       - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
 
-      - name: Setup Node
+      - uses: actions/checkout@v3
+
+      - name: Setup Node.js
         uses: actions/setup-node@v3
         with:
           node-version: 18
@@ -21,6 +25,9 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm test
+
+      - name: Ensure on main branch
+        run: git checkout main
 
       - name: Create release branch
         run: |
@@ -35,7 +42,7 @@ jobs:
       - name: Login to Yandex Container Registry
         run: echo "${{ secrets.YC_CR_PASSWORD }}" | docker login --username oauth --password-stdin cr.yandex
 
-      - name: Push image
+      - name: Push Docker images
         run: |
           docker push $REGISTRY:${{ env.VERSION }}
           docker push $REGISTRY:${{ env.VERSION }}_latest
@@ -45,9 +52,28 @@ jobs:
           git tag v${{ env.VERSION }}
           git push origin v${{ env.VERSION }}
 
+      - name: Get previous release tag
+        id: prev_tag
+        run: |
+          git fetch --tags
+          echo "tag=$(git describe --tags --abbrev=0 2>/dev/null || echo initial)" >> $GITHUB_OUTPUT
+
+      - name: Generate changelog from commits
+        id: changelog
+        run: |
+          if [ "${{ steps.prev_tag.outputs.tag }}" = "initial" ]; then
+            git log --oneline > commits.txt
+          else
+            git log ${{ steps.prev_tag.outputs.tag }}..HEAD --oneline > commits.txt
+          fi
+          cat commits.txt
+
       - name: Create GitHub Issue
         run: |
           echo "Release created by ${{ github.actor }} on $(date -u)" > release-body.txt
+          echo "" >> release-body.txt
+          echo "Commits since **${{ steps.prev_tag.outputs.tag }}**:" >> release-body.txt
+          cat commits.txt >> release-body.txt
           echo "" >> release-body.txt
           echo "Image: $REGISTRY:${{ env.VERSION }}" >> release-body.txt
 
@@ -60,7 +86,11 @@ jobs:
 
       - name: Update CHANGELOG.md
         run: |
-          echo -e "## v${{ env.VERSION }}\n\n- See commits since last release\n" | cat - CHANGELOG.md > temp && mv temp CHANGELOG.md
+          echo "## v${{ env.VERSION }}" > new_changelog.txt
+          cat commits.txt >> new_changelog.txt
+          echo "" >> new_changelog.txt
+          cat CHANGELOG.md >> new_changelog.txt
+          mv new_changelog.txt CHANGELOG.md
           git config user.name github-actions
           git config user.email github-actions@github.com
           git add CHANGELOG.md

@@ -10,30 +10,76 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    env:
-      VERSION: ${{ github.event.inputs.version }}
-      REGISTRY: cr.yandex/crpcntqudb0hkbbnds00/app
 
     steps:
-      - name: Checkout repository
+      - name: Set environment variables
+        run: |
+          echo "VERSION=${{ github.event.inputs.version }}" >> $GITHUB_ENV
+          echo "REGISTRY=cr.yandex/crpcntqudb0hkbbnds00/app" >> $GITHUB_ENV
+
+      - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Deploy to Yandex VM over SSH
+      - name: Find related issue
+        id: find_issue
+        run: |
+          ISSUE_NUMBER=$(gh issue list --limit 1 --search "Release v${{ github.event.inputs.version }} in:title" --json number --jq '.[0].number')
+          if [ -z "$ISSUE_NUMBER" ]; then
+            echo "::error::No GitHub issue found for release v${{ github.event.inputs.version }}"
+            exit 1
+          fi
+          echo "issue_number=$ISSUE_NUMBER" >> $GITHUB_OUTPUT
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify image exists
+        run: |
+          echo "${{ secrets.YC_CR_PASSWORD }}" | docker login -u oauth --password-stdin cr.yandex
+          if ! docker manifest inspect cr.yandex/crpcntqudb0hkbbnds00/app:${{ github.event.inputs.version }}_latest > /dev/null; then
+            echo "::error::Image not found in registry"
+            exit 1
+          fi
+
+      - name: Deploy to Yandex VM
         uses: appleboy/ssh-action@v1.0.0
         with:
           host: ${{ secrets.VM_SSH_HOST }}
           username: ${{ secrets.VM_SSH_USER }}
           key: ${{ secrets.VM_SSH_KEY }}
+          envs: VERSION,REGISTRY
           script: |
-            docker login cr.yandex -u oauth -p "${{ secrets.YC_CR_PASSWORD }}"
-            docker pull ${{ env.REGISTRY }}:${{ env.VERSION }}_latest
-            docker stop shri-infra || true
-            docker rm shri-infra || true
-            docker run -d --name shri-infra -p 80:3000 ${{ env.REGISTRY }}:${{ env.VERSION }}_latest
+            set -e
+            echo "Starting deployment of version $VERSION..."
 
-      - name: Comment to Issue
+            docker login cr.yandex -u oauth -p "${{ secrets.YC_CR_PASSWORD }}"
+            docker pull $REGISTRY:${VERSION}_latest
+
+            docker stop shri-infra || echo "No container to stop"
+            docker rm shri-infra || echo "No container to remove"
+
+            docker run -d \
+              --name shri-infra \
+              --restart unless-stopped \
+              -p 80:3000 \
+              -e NODE_ENV=production \
+              $REGISTRY:${VERSION}_latest
+
+            echo "Deployment complete."
+
+      - name: Verify deployment
         run: |
-          gh issue comment $(gh issue list --limit 1 --search "Release v${{ env.VERSION }}" --json number --jq '.[0].number') \
-            --body "🚀 Release **v${{ env.VERSION }}** deployed to production\n📅 $(date -u)\n👤 By @${{ github.actor }}"
+          echo "Waiting for the app to start..."
+          sleep 10
+          if curl -sSf http://${{ secrets.VM_SSH_HOST }}/hw/store > /dev/null; then
+            echo "App is responding"
+          else
+            echo "::error::App is not responding at /hw/store"
+            exit 1
+          fi
+
+      - name: Comment on GitHub issue
+        run: |
+          gh issue comment ${{ steps.find_issue.outputs.issue_number }} \
+            --body "$(echo -e "🚀 Release **v${VERSION}** deployed to production\n📅 $(date -u)\n👤 By @${{ github.actor }}\n🌐 http://${{ secrets.VM_SSH_HOST }}")"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

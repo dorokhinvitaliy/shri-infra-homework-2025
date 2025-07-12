@@ -70,10 +70,10 @@ jobs:
         run: |
           echo "Waiting for the app to start..."
           sleep 10
-          if curl -sSf http://${{ secrets.VM_SSH_HOST }} > /dev/null; then
+          if curl -sSf http://${{ secrets.VM_SSH_HOST }}/hw/store > /dev/null; then
             echo "App is responding"
           else
-            echo "::error::App is not responding"
+            echo "::error::App is not responding at /hw/store"
             exit 1
           fi
 

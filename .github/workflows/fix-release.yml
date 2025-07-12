@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Release version to fix (e.g. 12)"
+        description: "Release version to fix (e.g. 3)"
         required: true
 
 jobs:
@@ -13,11 +13,14 @@ jobs:
     env:
       VERSION: ${{ github.event.inputs.version }}
       FIX_NUMBER: ${{ github.run_number }}
-      REGISTRY: cr.yandex/<ваш-идентификатор-реестра>/app
+      REGISTRY: cr.yandex/crpcntqudb0hkbbnds00/app
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
+
+      - name: Checkout release branch
+        run: git checkout releases/${{ env.VERSION }}
 
       - name: Set up Node.js
         uses: actions/setup-node@v3
@@ -52,9 +55,21 @@ jobs:
           git tag v${VERSION}_fix${FIX_NUMBER}
           git push origin v${VERSION}_fix${FIX_NUMBER}
 
+      - name: Get previous tag
+        id: prev_tag
+        run: |
+          git fetch --tags
+          PREV=$(git tag --sort=-creatordate | grep -E "^v${VERSION}(_fix[0-9]+)?$" | head -n 1)
+          echo "tag=$PREV" >> $GITHUB_OUTPUT
+
+      - name: Get commit list
+        run: |
+          echo "**Commits since \`${{ steps.prev_tag.outputs.tag }}\`:**" > commits.txt
+          git log ${{ steps.prev_tag.outputs.tag }}..HEAD --oneline >> commits.txt || echo "No new commits" >> commits.txt
+
       - name: Comment on GitHub issue
         run: |
           gh issue comment $(gh issue list --limit 1 --search "Release v$VERSION" --json number --jq '.[0].number') \
-            --body "🛠 Fix #${FIX_NUMBER} for Release **v${VERSION}**\n- 📅 Date: $(date -u)\n- 👤 Author: @${{ github.actor }}\n- 🐳 Docker Image: \`${REGISTRY}:${VERSION}_fix${FIX_NUMBER}\`"
+            --body "$(echo -e '🛠 Fix #${FIX_NUMBER} for Release **v${VERSION}**\n📅 Date: $(date -u)\n👤 Author: @${{ github.actor }}\n🐳 Docker Image: `${REGISTRY}:${VERSION}_fix${FIX_NUMBER}`\n\n'; cat commits.txt)"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

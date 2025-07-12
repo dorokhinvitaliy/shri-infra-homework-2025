@@ -6,42 +6,39 @@ on:
       version:
         description: "Release version to deploy (e.g. 3)"
         required: true
-      confirm:
-        description: "Type 'DEPLOY' to confirm"
-        required: true
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    if: inputs.confirm == 'DEPLOY'
-    env:
-      VERSION: ${{ github.event.inputs.version }}
-      REGISTRY: cr.yandex/crpcntqudb0hkbbnds00/app
 
     steps:
-      - name: Verify inputs
+      - name: Set environment variables
         run: |
-          if [ -z "$VERSION" ]; then
-            echo "::error::Version parameter is required"
-            exit 1
-          fi
+          echo "VERSION=${{ github.event.inputs.version }}" >> $GITHUB_ENV
+          echo "REGISTRY=cr.yandex/crpcntqudb0hkbbnds00/app" >> $GITHUB_ENV
 
       - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Verify image exists
-        run: |
-          echo "${{ secrets.YC_CR_PASSWORD }}" | docker login -u oauth --password-stdin cr.yandex
-          if ! docker manifest inspect $REGISTRY:${VERSION}_latest > /dev/null; then
-            echo "::error::Image $REGISTRY:${VERSION}_latest does not exist in registry"
-            exit 1
-          fi
-
       - name: Find related issue
         id: find_issue
         run: |
-          ISSUE_NUMBER=$(gh issue list --limit 1 --search "Release v$VERSION in:title" --json number --jq '.[0].number')
+          ISSUE_NUMBER=$(gh issue list --limit 1 --search "Release v${{ github.event.inputs.version }} in:title" --json number --jq '.[0].number')
+          if [ -z "$ISSUE_NUMBER" ]; then
+            echo "::error::No GitHub issue found for release v${{ github.event.inputs.version }}"
+            exit 1
+          fi
           echo "issue_number=$ISSUE_NUMBER" >> $GITHUB_OUTPUT
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify image exists
+        run: |
+          echo "${{ secrets.YC_CR_PASSWORD }}" | docker login -u oauth --password-stdin cr.yandex
+          if ! docker manifest inspect cr.yandex/crpcntqudb0hkbbnds00/app:${{ github.event.inputs.version }}_latest > /dev/null; then
+            echo "::error::Image not found in registry"
+            exit 1
+          fi
 
       - name: Deploy to Yandex VM
         uses: appleboy/ssh-action@v1.0.0
@@ -49,19 +46,17 @@ jobs:
           host: ${{ secrets.VM_SSH_HOST }}
           username: ${{ secrets.VM_SSH_USER }}
           key: ${{ secrets.VM_SSH_KEY }}
+          envs: VERSION,REGISTRY
           script: |
             set -e
-            echo "Starting deployment of version $VERSION"
+            echo "Starting deployment of version $VERSION..."
 
-            # Login and pull image
             docker login cr.yandex -u oauth -p "${{ secrets.YC_CR_PASSWORD }}"
             docker pull $REGISTRY:${VERSION}_latest
 
-            # Stop and remove old container if exists
-            docker stop shri-infra || echo "No running container to stop"
+            docker stop shri-infra || echo "No container to stop"
             docker rm shri-infra || echo "No container to remove"
 
-            # Run new container
             docker run -d \
               --name shri-infra \
               --restart unless-stopped \
@@ -69,23 +64,22 @@ jobs:
               -e NODE_ENV=production \
               $REGISTRY:${VERSION}_latest
 
-            echo "Deployment completed successfully"
+            echo "Deployment complete."
 
       - name: Verify deployment
         run: |
-          sleep 10  # Wait for app to start
-          curl -sSf http://${{ secrets.VM_SSH_HOST }} || (echo "::error::Application not responding"; exit 1)
+          echo "Waiting for the app to start..."
+          sleep 10
+          if curl -sSf http://${{ secrets.VM_SSH_HOST }} > /dev/null; then
+            echo "App is responding"
+          else
+            echo "::error::App is not responding"
+            exit 1
+          fi
 
       - name: Comment on GitHub issue
-        if: steps.find_issue.outputs.issue_number != ''
         run: |
           gh issue comment ${{ steps.find_issue.outputs.issue_number }} \
-            --body "$(echo -e "🚀 Release **v$VERSION** deployed to production\n📅 $(date -u)\n👤 By @${{ github.actor }}\n\nApplication available at: http://${{ secrets.VM_SSH_HOST }}")"
+            --body "$(echo -e "🚀 Release **v${VERSION}** deployed to production\n📅 $(date -u)\n👤 By @${{ github.actor }}\n🌐 http://${{ secrets.VM_SSH_HOST }}")"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Fail if no issue found
-        if: steps.find_issue.outputs.issue_number == ''
-        run: |
-          echo "::error::No GitHub issue found for release v$VERSION"
-          exit 1

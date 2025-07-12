@@ -11,23 +11,29 @@ jobs:
   fix-release:
     runs-on: ubuntu-latest
     steps:
-      - name: Verify release branch exists
-        run: |
-          if ! git show-ref --verify --quiet refs/remotes/origin/releases/$VERSION; then
-            echo "::error::Release branch releases/$VERSION does not exist"
-            exit 1
-          fi
-      - name: Checkout code
-        uses: actions/checkout@v3
-
       - name: Set environment variables
         run: |
           echo "VERSION=${{ github.event.inputs.version }}" >> $GITHUB_ENV
           echo "FIX_NUMBER=${{ github.run_number }}" >> $GITHUB_ENV
           echo "REGISTRY=cr.yandex/crpcntqudb0hkbbnds00/app" >> $GITHUB_ENV
 
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Verify release branch exists
+        run: |
+          git fetch --all
+          if ! git show-ref --verify --quiet refs/remotes/origin/releases/$VERSION; then
+            echo "::error::Release branch releases/$VERSION does not exist"
+            exit 1
+          fi
+
       - name: Checkout release branch
-        run: git checkout releases/$VERSION
+        run: |
+          git checkout releases/$VERSION
+          git pull origin releases/$VERSION
 
       - name: Set up Node.js
         uses: actions/setup-node@v3
@@ -39,8 +45,8 @@ jobs:
 
       - name: Run type checks and tests
         run: |
-          npm run lint
-          npm test
+          npm run lint || exit 1
+          npm test || exit 1
 
       - name: Build Docker image
         run: |
@@ -48,7 +54,8 @@ jobs:
           docker tag $REGISTRY:${VERSION}_fix${FIX_NUMBER} $REGISTRY:${VERSION}_latest
 
       - name: Login to Yandex Container Registry
-        run: echo "${{ secrets.YC_CR_PASSWORD }}" | docker login -u oauth --password-stdin cr.yandex
+        run: |
+          echo "${{ secrets.YC_CR_PASSWORD }}" | docker login -u oauth --password-stdin cr.yandex
 
       - name: Push Docker image
         run: |
@@ -74,9 +81,22 @@ jobs:
           echo "**Commits since \`${{ steps.prev_tag.outputs.tag }}\`:**" > commits.txt
           git log ${{ steps.prev_tag.outputs.tag }}..HEAD --oneline >> commits.txt || echo "No new commits" >> commits.txt
 
-      - name: Comment on GitHub issue
+      - name: Find related issue
+        id: find_issue
         run: |
-          gh issue comment $(gh issue list --limit 1 --search "Release v$VERSION" --json number --jq '.[0].number') \
+          ISSUE_NUMBER=$(gh issue list --limit 1 --search "Release v$VERSION in:title" --json number --jq '.[0].number')
+          echo "issue_number=$ISSUE_NUMBER" >> $GITHUB_OUTPUT
+
+      - name: Comment on GitHub issue
+        if: steps.find_issue.outputs.issue_number != ''
+        run: |
+          gh issue comment ${{ steps.find_issue.outputs.issue_number }} \
             --body "$(echo -e "🛠 Fix #$FIX_NUMBER for Release **v$VERSION**\n📅 Date: $(date -u)\n👤 Author: @${{ github.actor }}\n🐳 Docker Image: \`$REGISTRY:${VERSION}_fix${FIX_NUMBER}\`\n\n"; cat commits.txt)"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Fail if no issue found
+        if: steps.find_issue.outputs.issue_number == ''
+        run: |
+          echo "::error::No GitHub issue found for release v$VERSION"
+          exit 1

@@ -60,24 +60,17 @@ jobs:
         id: prev_tag
         run: |
           git fetch --tags
-          # Найдём все релевантные теги для этой версии: v3, v3_fix1, v3_fix2 и т.п.
-          TAGS=$(git tag --sort=-creatordate | grep -E "^v${VERSION}(_fix[0-9]+)?$")
-          PREV_TAG=$(echo "$TAGS" | sed -n '2p')  # второй по свежести — это предыдущий фикс
-          echo "tag=$PREV_TAG" >> $GITHUB_OUTPUT
+          PREV=$(git tag --sort=-creatordate | grep -E "^v${VERSION}(_fix[0-9]+)?$" | head -n 2 | tail -n 1)
+          echo "tag=$PREV" >> $GITHUB_OUTPUT
 
       - name: Get commit list
         run: |
           echo "**Commits since \`${{ steps.prev_tag.outputs.tag }}\`:**" > commits.txt
-          if [ -n "${{ steps.prev_tag.outputs.tag }}" ]; then
-            git log ${{ steps.prev_tag.outputs.tag }}..HEAD --oneline >> commits.txt
-          else
-            echo "No previous tag found. Showing all commits:" >> commits.txt
-            git log --oneline >> commits.txt
-          fi
+          git log ${{ steps.prev_tag.outputs.tag }}..HEAD --oneline >> commits.txt || echo "No new commits" >> commits.txt
 
       - name: Comment on GitHub issue
         run: |
           gh issue comment $(gh issue list --limit 1 --search "Release v$VERSION" --json number --jq '.[0].number') \
-            --body "$(echo -e "🛠 Fix #$FIX_NUMBER for Release **v$VERSION**\n📅 Date: $(date -u)\n👤 Author: @${{ github.actor }}\n🐳 Docker Image: \`$REGISTRY:${VERSION}_fix${FIX_NUMBER}\`\n\n"; cat commits.txt)"
+            --body "$(echo -e "🛠 Fix \`#${FIX_NUMBER}\` for Release **v${VERSION}**\n📅 Date: $(date -u)\n👤 Author: @${{ github.actor }}\n🐳 Docker Image: \`${REGISTRY}:${VERSION}_fix${FIX_NUMBER}\`\n\n"; cat commits.txt)"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

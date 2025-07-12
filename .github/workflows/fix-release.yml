@@ -11,29 +11,17 @@ jobs:
   fix-release:
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
       - name: Set environment variables
         run: |
           echo "VERSION=${{ github.event.inputs.version }}" >> $GITHUB_ENV
           echo "FIX_NUMBER=${{ github.run_number }}" >> $GITHUB_ENV
           echo "REGISTRY=cr.yandex/crpcntqudb0hkbbnds00/app" >> $GITHUB_ENV
 
-      - name: Checkout code
-        uses: actions/checkout@v3
-        with:
-          fetch-depth: 0
-
-      - name: Verify release branch exists
-        run: |
-          git fetch --all
-          if ! git show-ref --verify --quiet refs/remotes/origin/releases/$VERSION; then
-            echo "::error::Release branch releases/$VERSION does not exist"
-            exit 1
-          fi
-
       - name: Checkout release branch
-        run: |
-          git checkout releases/$VERSION
-          git pull origin releases/$VERSION
+        run: git checkout releases/$VERSION
 
       - name: Set up Node.js
         uses: actions/setup-node@v3
@@ -45,8 +33,8 @@ jobs:
 
       - name: Run type checks and tests
         run: |
-          npm run lint || exit 1
-          npm test || exit 1
+          npm run lint
+          npm test
 
       - name: Build Docker image
         run: |
@@ -54,8 +42,7 @@ jobs:
           docker tag $REGISTRY:${VERSION}_fix${FIX_NUMBER} $REGISTRY:${VERSION}_latest
 
       - name: Login to Yandex Container Registry
-        run: |
-          echo "${{ secrets.YC_CR_PASSWORD }}" | docker login -u oauth --password-stdin cr.yandex
+        run: echo "${{ secrets.YC_CR_PASSWORD }}" | docker login -u oauth --password-stdin cr.yandex
 
       - name: Push Docker image
         run: |
@@ -73,61 +60,24 @@ jobs:
         id: prev_tag
         run: |
           git fetch --tags
-          PREV=$(git tag --sort=-creatordate | grep -E "^v${VERSION}(_fix[0-9]+)?$" | head -n 1)
-          echo "tag=$PREV" >> $GITHUB_OUTPUT
+          # Найдём все релевантные теги для этой версии: v3, v3_fix1, v3_fix2 и т.п.
+          TAGS=$(git tag --sort=-creatordate | grep -E "^v${VERSION}(_fix[0-9]+)?$")
+          PREV_TAG=$(echo "$TAGS" | sed -n '2p')  # второй по свежести — это предыдущий фикс
+          echo "tag=$PREV_TAG" >> $GITHUB_OUTPUT
 
       - name: Get commit list
         run: |
-          git fetch --tags
-
-          # Получаем все теги для этой версии
-          ALL_TAGS=$(git tag --sort=-creatordate | grep -E "^v${VERSION}(_fix[0-9]+)?$")
-
-          # Находим текущий и предыдущий фиксы
-          CURRENT_TAG="v${VERSION}_fix${FIX_NUMBER}"
-          PREV_TAG=$(echo "$ALL_TAGS" | grep -E "^v${VERSION}(_fix[0-9]+)?$" | grep -B1 "$CURRENT_TAG" | head -n1)
-
-          if [ -z "$PREV_TAG" ] || [ "$PREV_TAG" = "$CURRENT_TAG" ]; then
-            # Если предыдущего тега нет (первый фикс), сравниваем с релизным тегом
-            PREV_TAG="v${VERSION}"
-          fi
-
-          echo "Comparing changes between $PREV_TAG and $CURRENT_TAG"
-
-          # Формируем сообщение с коммитами
-          echo "🛠 Fix #${FIX_NUMBER} for Release v${VERSION}" > comment.txt
-          echo "📅 Date: $(date -u)" >> comment.txt
-          echo "👤 Author: @${{ github.actor }}" >> comment.txt
-          echo "🐳 Docker Image: \`$REGISTRY:${VERSION}_fix${FIX_NUMBER}\`" >> comment.txt
-          echo "" >> comment.txt
-
-          if [ "$PREV_TAG" = "$CURRENT_TAG" ]; then
-            echo "No new commits since last fix" >> comment.txt
+          echo "**Commits since \`${{ steps.prev_tag.outputs.tag }}\`:**" > commits.txt
+          if [ -n "${{ steps.prev_tag.outputs.tag }}" ]; then
+            git log ${{ steps.prev_tag.outputs.tag }}..HEAD --oneline >> commits.txt
           else
-            echo "**Commits since \`${PREV_TAG}\`:**" >> comment.txt
-            git log ${PREV_TAG}..${CURRENT_TAG} --oneline >> comment.txt || echo "No new commits" >> comment.txt
+            echo "No previous tag found. Showing all commits:" >> commits.txt
+            git log --oneline >> commits.txt
           fi
-
-          cat comment.txt
-
-      - name: Find related issue
-        id: find_issue
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          ISSUE_NUMBER=$(gh issue list --limit 1 --search "Release v$VERSION in:title" --json number --jq '.[0].number')
-          echo "issue_number=$ISSUE_NUMBER" >> $GITHUB_OUTPUT
 
       - name: Comment on GitHub issue
-        if: steps.find_issue.outputs.issue_number != ''
         run: |
-          gh issue comment ${{ steps.find_issue.outputs.issue_number }} \
+          gh issue comment $(gh issue list --limit 1 --search "Release v$VERSION" --json number --jq '.[0].number') \
             --body "$(echo -e "🛠 Fix #$FIX_NUMBER for Release **v$VERSION**\n📅 Date: $(date -u)\n👤 Author: @${{ github.actor }}\n🐳 Docker Image: \`$REGISTRY:${VERSION}_fix${FIX_NUMBER}\`\n\n"; cat commits.txt)"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Fail if no issue found
-        if: steps.find_issue.outputs.issue_number == ''
-        run: |
-          echo "::error::No GitHub issue found for release v$VERSION"
-          exit 1

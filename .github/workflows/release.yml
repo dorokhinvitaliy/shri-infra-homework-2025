@@ -68,14 +68,14 @@ jobs:
 
       - name: Build release.md
         run: |
-          echo "## Релиз v${VERSION}" > release.md
+          echo "## Release v${VERSION}" > release.md
           echo "" >> release.md
-          echo "**Дата:** $(date '+%Y-%m-%d')" >> release.md
-          echo "**Автор:** ${{ github.actor }}" >> release.md
-          echo "**Версия:** v${VERSION}" >> release.md
-          echo "**Docker-образ:** $REGISTRY:${VERSION}" >> release.md
+          echo "**Date:** $(date '+%Y-%m-%d')" >> release.md
+          echo "**Author:** ${{ github.actor }}" >> release.md
+          echo "**Version:** v${VERSION}" >> release.md
+          echo "**Docker:** $REGISTRY:${VERSION}" >> release.md
           echo "" >> release.md
-          echo "**Коммиты:**" >> release.md
+          echo "**Commits:**" >> release.md
           cat commits.txt >> release.md
 
       - name: Create GitHub issue
@@ -88,8 +88,8 @@ jobs:
 
       - name: Update CHANGELOG.md
         run: |
-          git checkout releases/${VERSION}
-          git pull origin releases/${VERSION}
+          git checkout main
+          git pull origin main
 
           git config user.name github-actions
           git config user.email github-actions@github.com

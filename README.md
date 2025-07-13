@@ -59,3 +59,5 @@ Workflow `deploy.yml`:
 
 В файле `./src/client/pages/About.tsx` заменено `[Your Name]` на **Виталий Дорохин**. &#x20;
 Тест обновлён и успешно проходит.
+
+---

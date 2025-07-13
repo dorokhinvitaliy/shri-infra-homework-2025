@@ -80,6 +80,6 @@ jobs:
       - name: Comment on GitHub issue
         run: |
           gh issue comment ${{ steps.find_issue.outputs.issue_number }} \
-            --body "$(echo -e "🚀 Release **v${VERSION}** deployed to production\n📅 $(date -u)\n👤 By @${{ github.actor }}\n🌐 http://${{ secrets.VM_SSH_HOST }}")"
+            --body "$(echo -e "🚀 Release **v${VERSION}** deployed to production\n📅 $(date -u)\n👤 By @${{ github.actor }}\n🌐 http://${{ secrets.VM_SSH_HOST }}/hw/store")"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

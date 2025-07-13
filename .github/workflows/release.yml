@@ -15,8 +15,6 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: actions/checkout@v3
-
       - name: Setup Node.js
         uses: actions/setup-node@v3
         with:
@@ -49,24 +47,23 @@ jobs:
 
       - name: Create Git tag
         run: |
+          git config user.name github-actions
+          git config user.email github-actions@github.com
           git tag v${{ env.VERSION }}
           git push origin v${{ env.VERSION }}
 
-      - name: Get previous release tag
+      - name: Get previous tag
         id: prev_tag
         run: |
           git fetch --tags
-          echo "tag=$(git describe --tags --abbrev=0 2>/dev/null || echo initial)" >> $GITHUB_OUTPUT
+          PREV=$(git tag --sort=-creatordate | grep -E '^v[0-9]+(_fix[0-9]+)?$' | tail -n 2 | head -n 1)
+          echo "tag=$PREV" >> $GITHUB_OUTPUT
 
       - name: Generate changelog from commits
-        id: changelog
         run: |
-          if [ "${{ steps.prev_tag.outputs.tag }}" = "initial" ]; then
-            git log --oneline > commits.txt
-          else
-            git log ${{ steps.prev_tag.outputs.tag }}..HEAD --oneline > commits.txt
-          fi
-          cat commits.txt
+          echo "## v${{ env.VERSION }}" > commits.txt
+          echo "" >> commits.txt
+          git log ${{ steps.prev_tag.outputs.tag }}..HEAD --oneline >> commits.txt
 
       - name: Create GitHub Issue
         run: |
@@ -86,13 +83,10 @@ jobs:
 
       - name: Update CHANGELOG.md
         run: |
-          echo "## v${{ env.VERSION }}" > new_changelog.txt
-          cat commits.txt >> new_changelog.txt
+          cat commits.txt > new_changelog.txt
           echo "" >> new_changelog.txt
           cat CHANGELOG.md >> new_changelog.txt
           mv new_changelog.txt CHANGELOG.md
-          git config user.name github-actions
-          git config user.email github-actions@github.com
           git add CHANGELOG.md
           git commit -m "docs: update CHANGELOG for v${{ env.VERSION }}"
           git push origin releases/${{ env.VERSION }}

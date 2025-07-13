@@ -1,3 +1,7 @@
+## v13 - 2025-07-13
+
+- b20765b Merge pull request #23 from dorokhinvitaliy/fix/home-page
+- e7f6e59 final fixing
 ## v12 - 2025-07-13
 
 - bc1bb33 Merge pull request #20 from dorokhinvitaliy/fix/readme

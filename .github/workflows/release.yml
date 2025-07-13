@@ -15,7 +15,10 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Setup Node.js
+      - name: Ensure on main branch
+        run: git checkout main
+
+      - name: Set up Node.js
         uses: actions/setup-node@v3
         with:
           node-version: 18
@@ -24,9 +27,6 @@ jobs:
       - run: npm run lint
       - run: npm test
 
-      - name: Ensure on main branch
-        run: git checkout main
-
       - name: Create release branch
         run: |
           git checkout -b releases/${{ env.VERSION }}
@@ -34,48 +34,55 @@ jobs:
 
       - name: Build Docker image
         run: |
-          docker build -t $REGISTRY:${{ env.VERSION }} .
-          docker tag $REGISTRY:${{ env.VERSION }} $REGISTRY:${{ env.VERSION }}_latest
+          docker build -t $REGISTRY:${VERSION} .
+          docker tag $REGISTRY:${VERSION} $REGISTRY:${VERSION}_latest
 
       - name: Login to Yandex Container Registry
-        run: echo "${{ secrets.YC_CR_PASSWORD }}" | docker login --username oauth --password-stdin cr.yandex
+        run: echo "${{ secrets.YC_CR_PASSWORD }}" | docker login -u oauth --password-stdin cr.yandex
 
-      - name: Push Docker images
+      - name: Push Docker image
         run: |
-          docker push $REGISTRY:${{ env.VERSION }}
-          docker push $REGISTRY:${{ env.VERSION }}_latest
+          docker push $REGISTRY:${VERSION}
+          docker push $REGISTRY:${VERSION}_latest
 
       - name: Create Git tag
         run: |
           git config user.name github-actions
           git config user.email github-actions@github.com
-          git tag v${{ env.VERSION }}
-          git push origin v${{ env.VERSION }}
+          git tag v${VERSION}
+          git push origin v${VERSION}
 
       - name: Get previous tag
         id: prev_tag
         run: |
           git fetch --tags
-          PREV=$(git tag --sort=-creatordate | grep -E '^v[0-9]+(_fix[0-9]+)?$' | tail -n 2 | head -n 1)
+          PREV=$(git tag --sort=-creatordate | grep -E "^v[0-9]+(_fix[0-9]+)?$" | head -n 2 | tail -n 1)
           echo "tag=$PREV" >> $GITHUB_OUTPUT
 
       - name: Generate changelog from commits
+        id: changelog
         run: |
-          echo "## v${{ env.VERSION }}" > commits.txt
-          echo "" >> commits.txt
-          git log ${{ steps.prev_tag.outputs.tag }}..HEAD --oneline >> commits.txt
+          echo "## v${VERSION}" > changelog.txt
+          echo "" >> changelog.txt
+          if [ -n "${{ steps.prev_tag.outputs.tag }}" ]; then
+            echo "Commits since \`${{ steps.prev_tag.outputs.tag }}\`:" >> changelog.txt
+            git log ${{ steps.prev_tag.outputs.tag }}..HEAD --oneline >> changelog.txt
+          else
+            echo "Initial release" >> changelog.txt
+            git log --oneline >> changelog.txt
+          fi
+          cat changelog.txt
 
       - name: Create GitHub Issue
         run: |
           echo "Release created by ${{ github.actor }} on $(date -u)" > release-body.txt
           echo "" >> release-body.txt
-          echo "Commits since **${{ steps.prev_tag.outputs.tag }}**:" >> release-body.txt
-          cat commits.txt >> release-body.txt
+          cat changelog.txt >> release-body.txt
           echo "" >> release-body.txt
-          echo "Image: $REGISTRY:${{ env.VERSION }}" >> release-body.txt
+          echo "Image: $REGISTRY:${VERSION}" >> release-body.txt
 
           gh issue create \
-            --title "Release v${{ env.VERSION }}" \
+            --title "Release v${VERSION}" \
             --body-file release-body.txt \
             --repo ${{ github.repository }}
         env:
@@ -83,10 +90,11 @@ jobs:
 
       - name: Update CHANGELOG.md
         run: |
-          cat commits.txt > new_changelog.txt
-          echo "" >> new_changelog.txt
-          cat CHANGELOG.md >> new_changelog.txt
-          mv new_changelog.txt CHANGELOG.md
+          cat changelog.txt > temp-changelog.md
+          echo "" >> temp-changelog.md
+          cat CHANGELOG.md >> temp-changelog.md
+          mv temp-changelog.md CHANGELOG.md
+
           git add CHANGELOG.md
-          git commit -m "docs: update CHANGELOG for v${{ env.VERSION }}"
-          git push origin releases/${{ env.VERSION }}
+          git commit -m "docs: update CHANGELOG for v${VERSION}"
+          git push origin releases/${VERSION}

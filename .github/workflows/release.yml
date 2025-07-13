@@ -11,90 +11,101 @@ jobs:
       REGISTRY: cr.yandex/crpcntqudb0hkbbnds00/app
 
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout code
+        uses: actions/checkout@v3
         with:
           fetch-depth: 0
+
+      - name: Fetch tags
+        run: git fetch --tags
 
       - name: Ensure on main branch
         run: git checkout main
 
-      - name: Set up Node.js
+      - name: Setup Node.js
         uses: actions/setup-node@v3
         with:
           node-version: 18
 
-      - run: npm ci
-      - run: npm run lint
-      - run: npm test
+      - name: Install deps & test
+        run: |
+          npm ci
+          npm run lint
+          npm test
 
       - name: Create release branch
         run: |
           git checkout -b releases/${{ env.VERSION }}
           git push origin releases/${{ env.VERSION }}
 
-      - name: Build Docker image
+      - name: Docker login
+        run: echo "${{ secrets.YC_CR_PASSWORD }}" | docker login -u oauth --password-stdin cr.yandex
+
+      - name: Build and push Docker image
         run: |
           docker build -t $REGISTRY:${VERSION} .
           docker tag $REGISTRY:${VERSION} $REGISTRY:${VERSION}_latest
-
-      - name: Login to Yandex Container Registry
-        run: echo "${{ secrets.YC_CR_PASSWORD }}" | docker login -u oauth --password-stdin cr.yandex
-
-      - name: Push Docker image
-        run: |
           docker push $REGISTRY:${VERSION}
           docker push $REGISTRY:${VERSION}_latest
 
-      - name: Create Git tag
+      - name: Create git tag
         run: |
           git config user.name github-actions
           git config user.email github-actions@github.com
           git tag v${VERSION}
           git push origin v${VERSION}
 
-      - name: Get previous tag
-        id: prev_tag
+      - name: Get commit list since previous tag
         run: |
-          git fetch --tags
-          PREV=$(git tag --sort=-creatordate | grep -E "^v[0-9]+(_fix[0-9]+)?$" | head -n 2 | tail -n 1)
-          echo "tag=$PREV" >> $GITHUB_OUTPUT
+          PREV_TAG=$(git tag --sort=-creatordate | grep -E "^v[0-9]+(_fix[0-9]+)?$" | sed -n '2p')
+          echo "PREV_TAG=$PREV_TAG" >> $GITHUB_ENV
 
-      - name: Generate changelog from commits
-        id: changelog
-        run: |
-          echo "## v${VERSION}" > changelog.txt
-          echo "" >> changelog.txt
-          if [ -n "${{ steps.prev_tag.outputs.tag }}" ]; then
-            echo "Commits since \`${{ steps.prev_tag.outputs.tag }}\`:" >> changelog.txt
-            git log ${{ steps.prev_tag.outputs.tag }}..HEAD --oneline >> changelog.txt
+          if [ -z "$PREV_TAG" ]; then
+            git log --pretty=format:'- %h %s' > commits.txt
           else
-            echo "Initial release" >> changelog.txt
-            git log --oneline >> changelog.txt
+            git log --pretty=format:'- %h %s' $PREV_TAG..HEAD > commits.txt
           fi
-          cat changelog.txt
 
-      - name: Create GitHub Issue
+      - name: Build release.md
         run: |
-          echo "Release created by ${{ github.actor }} on $(date -u)" > release-body.txt
-          echo "" >> release-body.txt
-          cat changelog.txt >> release-body.txt
-          echo "" >> release-body.txt
-          echo "Image: $REGISTRY:${VERSION}" >> release-body.txt
+          echo "## Релиз v${VERSION}" > release.md
+          echo "" >> release.md
+          echo "**Дата:** $(date '+%Y-%m-%d')" >> release.md
+          echo "**Автор:** ${{ github.actor }}" >> release.md
+          echo "**Версия:** v${VERSION}" >> release.md
+          echo "**Docker-образ:** $REGISTRY:${VERSION}" >> release.md
+          echo "" >> release.md
+          echo "**Коммиты:**" >> release.md
+          cat commits.txt >> release.md
 
-          gh issue create \
-            --title "Release v${VERSION}" \
-            --body-file release-body.txt \
-            --repo ${{ github.repository }}
+      - name: Create GitHub issue
+        uses: peter-evans/create-issue-from-file@v4
+        with:
+          title: "Release v${{ env.VERSION }}"
+          content-filepath: ./release.md
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Update CHANGELOG.md
         run: |
-          cat changelog.txt > temp-changelog.md
-          echo "" >> temp-changelog.md
-          cat CHANGELOG.md >> temp-changelog.md
-          mv temp-changelog.md CHANGELOG.md
+          git checkout releases/${VERSION}
+          git pull origin releases/${VERSION}
+
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+
+          DATE=$(date '+%Y-%m-%d')
+          echo "## v${VERSION} - $DATE" > temp.md
+          echo "" >> temp.md
+          cat commits.txt >> temp.md
+
+          if [ -f CHANGELOG.md ]; then
+            echo "" >> temp.md
+            cat CHANGELOG.md >> temp.md
+          fi
+
+          mv temp.md CHANGELOG.md
 
           git add CHANGELOG.md
-          git commit -m "docs: update CHANGELOG for v${VERSION}"
+          git commit -m "docs: update changelog for v${VERSION}"
           git push origin releases/${VERSION}

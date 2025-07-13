@@ -10,15 +10,16 @@ on:
 jobs:
   fix-release:
     runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ github.event.inputs.version }}
+      FIX_NUMBER: ${{ github.run_number }}
+      REGISTRY: cr.yandex/crpcntqudb0hkbbnds00/app
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
-
-      - name: Set environment variables
-        run: |
-          echo "VERSION=${{ github.event.inputs.version }}" >> $GITHUB_ENV
-          echo "FIX_NUMBER=${{ github.run_number }}" >> $GITHUB_ENV
-          echo "REGISTRY=cr.yandex/crpcntqudb0hkbbnds00/app" >> $GITHUB_ENV
+        with:
+          fetch-depth: 0
 
       - name: Checkout release branch
         run: git checkout releases/$VERSION
@@ -65,21 +66,18 @@ jobs:
 
       - name: Get commit list
         run: |
-          echo "**Commits since \`${{ steps.prev_tag.outputs.tag }}`:**" > commits.txt
-          git log ${{ steps.prev_tag.outputs.tag }}..HEAD --pretty=format:'- %h %s' >> commits.txt || echo "No new commits" >> commits.txt
+          PREV_TAG="${{ steps.prev_tag.outputs.tag }}"
+          if [ -n "$PREV_TAG" ]; then
+            echo "**Commits since \`$PREV_TAG\`:**" > commits.txt
+            git log "$PREV_TAG"..HEAD --pretty=format:'- %h %s' >> commits.txt
+          else
+            echo "**Commits:**" > commits.txt
+            git log --pretty=format:'- %h %s' >> commits.txt
+          fi
 
       - name: Comment on GitHub issue
         run: |
-          ISSUE_NUMBER=$(gh issue list --limit 1 --search "Release v$VERSION" --json number --jq '.[0].number')
-          BODY=$(cat <<EOF
-          🛠 Fix \`#${FIX_NUMBER}\` for Release **v${VERSION}**
-          📅 Date: $(date -u)
-          👤 Author: @${{ github.actor }}
-          🐳 Docker Image: \`${REGISTRY}:${VERSION}_fix${FIX_NUMBER}\`
-          
-          $(cat commits.txt)
-          EOF
-          )
-          gh issue comment "$ISSUE_NUMBER" --body "$BODY"
+          gh issue comment $(gh issue list --limit 1 --search "Release v$VERSION" --json number --jq '.[0].number') \
+            --body "$(echo -e "🛠 Fix \`#${FIX_NUMBER}\` for Release **v${VERSION}**\n📅 Date: $(date -u)\n👤 Author: @${{ github.actor }}\n🐳 Docker Image: \`${REGISTRY}:${VERSION}_fix${FIX_NUMBER}\`\n\n"; cat commits.txt)"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

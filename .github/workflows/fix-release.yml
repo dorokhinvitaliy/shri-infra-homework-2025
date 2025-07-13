@@ -10,41 +10,44 @@ on:
 jobs:
   fix-release:
     runs-on: ubuntu-latest
-    env:
-      VERSION: ${{ github.event.inputs.version }}
-      FIX_NUMBER: ${{ github.run_number }}
-      REGISTRY: cr.yandex/crpcntqudb0hkbbnds00/app
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Set environment variables
+        run: |
+          echo "VERSION=${{ github.event.inputs.version }}" >> $GITHUB_ENV
+          echo "FIX_NUMBER=${{ github.run_number }}" >> $GITHUB_ENV
+          echo "REGISTRY=cr.yandex/crpcntqudb0hkbbnds00/app" >> $GITHUB_ENV
+
+      - name: Checkout release branch
+        run: git checkout releases/$VERSION
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
         with:
-          node-version: "22"
+          node-version: 18
 
       - name: Install dependencies
         run: npm ci
 
-      - name: Run lint and tests
+      - name: Run type checks and tests
         run: |
           npm run lint
           npm test
 
-      - name: Docker login
+      - name: Build Docker image
+        run: |
+          docker build -t $REGISTRY:${VERSION}_fix${FIX_NUMBER} .
+          docker tag $REGISTRY:${VERSION}_fix${FIX_NUMBER} $REGISTRY:${VERSION}_latest
+
+      - name: Login to Yandex Container Registry
         run: echo "${{ secrets.YC_CR_PASSWORD }}" | docker login -u oauth --password-stdin cr.yandex
 
-      - name: Build and push Docker image
+      - name: Push Docker image
         run: |
-          IMAGE=$REGISTRY:${VERSION}_fix${FIX_NUMBER}
-          LATEST=$REGISTRY:${VERSION}_latest
-
-          docker build -t $IMAGE .
-          docker tag $IMAGE $LATEST
-
-          docker push $IMAGE
-          docker push $LATEST
+          docker push $REGISTRY:${VERSION}_fix${FIX_NUMBER}
+          docker push $REGISTRY:${VERSION}_latest
 
       - name: Create Git tag
         run: |
@@ -53,37 +56,30 @@ jobs:
           git tag v${VERSION}_fix${FIX_NUMBER}
           git push origin v${VERSION}_fix${FIX_NUMBER}
 
-      - name: Generate issue body for fix
+      - name: Get previous tag
+        id: prev_tag
         run: |
-          DATE=$(date '+%Y-%m-%d')
-          AUTHOR=${{ github.actor }}
-          IMAGE=$REGISTRY:${VERSION}_fix${FIX_NUMBER}
-
           git fetch --tags
+          PREV=$(git tag --sort=-creatordate | grep -E "^v${VERSION}(_fix[0-9]+)?$" | head -n 2 | tail -n 1)
+          echo "tag=$PREV" >> $GITHUB_OUTPUT
 
-          PREV_TAG=$(git tag --sort=-creatordate | grep -E "^v${VERSION}(_fix[0-9]+)?$" | sed -n '2p')
+      - name: Get commit list
+        run: |
+          echo "**Commits since \`${{ steps.prev_tag.outputs.tag }}`:**" > commits.txt
+          git log ${{ steps.prev_tag.outputs.tag }}..HEAD --pretty=format:'- %h %s' >> commits.txt || echo "No new commits" >> commits.txt
 
-          if [ -z "$PREV_TAG" ]; then
-            echo "No previous tag found"
-            git log --pretty=format:'- %h %s' > fix_commits.txt
-          else
-            echo "Previous tag: $PREV_TAG"
-            git log --pretty=format:'- %h %s' $PREV_TAG..HEAD > fix_commits.txt
-          fi
-
-          {
-            echo "## 🛠 Фикс релиза v${VERSION}_fix${FIX_NUMBER}"
-            echo ""
-            echo "**📅 Дата:** $DATE"
-            echo "**👤 Автор:** $AUTHOR"
-            echo "**🐳 Docker-образ:** \`$IMAGE\`"
-            echo ""
-            echo "**📄 Коммиты с момента тега \`${PREV_TAG:-N/A}\`:**"
-            cat fix_commits.txt
-          } > fix.md
-
-      - name: Create issue for fix
-        uses: peter-evans/create-issue-from-file@v4
-        with:
-          title: "Fix Release v${{ env.VERSION }}_fix${{ env.FIX_NUMBER }}"
-          content-filepath: ./fix.md
+      - name: Comment on GitHub issue
+        run: |
+          ISSUE_NUMBER=$(gh issue list --limit 1 --search "Release v$VERSION" --json number --jq '.[0].number')
+          BODY=$(cat <<EOF
+          🛠 Fix \`#${FIX_NUMBER}\` for Release **v${VERSION}**
+          📅 Date: $(date -u)
+          👤 Author: @${{ github.actor }}
+          🐳 Docker Image: \`${REGISTRY}:${VERSION}_fix${FIX_NUMBER}\`
+          
+          $(cat commits.txt)
+          EOF
+          )
+          gh issue comment "$ISSUE_NUMBER" --body "$BODY"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -108,4 +108,4 @@ jobs:
 
           git add CHANGELOG.md
           git commit -m "docs: update changelog for v${VERSION}"
-          git push origin releases/${VERSION}
+          git push origin main

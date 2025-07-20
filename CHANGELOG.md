@@ -1,3 +1,7 @@
+## v17 - 2025-07-20
+
+- 2657d32 Merge pull request #30 from dorokhinvitaliy/aboba
+- 6944f94 add: aboba
 ## v13 - 2025-07-13
 
 - b20765b Merge pull request #23 from dorokhinvitaliy/fix/home-page
